@@ -223,7 +223,7 @@ const NAME={girl:G,bunny:B,mom:'媽媽',kitchen:'媽媽（廚房）',narr:''};
 const STN=['夢之起點','糖果樂園','餅乾海岸','晚霞雲端','銀河星軌','月亮車站'];
 const STN_NO=['起點','第一站','第二站','第三站','第四站','終點站'];
 const $=s=>document.querySelector(s);
-const LAND=[],ROOMS=[];
+const LAND=[],ROOMS=[],STN_SIGNS=[];
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)), lerp=(a,b,t)=>a+(b-a)*t;
 const ease=k=>k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;
 const smooth=k=>k*k*(3-2*k);
@@ -913,7 +913,7 @@ frames.forEach((f,i)=>{const g=new THREE.Group();const deep=i>=2;const h=deep?(i
   const plat=part(BOX,mat,g,null,[3,h,14]);plat.position.copy(f.local(3.6,.5-h/2,0));plat.rotation.y=Math.atan2(f.F.x,f.F.z);plat.receiveShadow=true;
   const trim=part(BOX,M(0xffffff,40),g,null,[3.1,.12,14.1]);trim.position.copy(f.local(3.6,.52,0));trim.rotation.y=plat.rotation.y;trim.receiveShadow=true;
   for(const z of[-6.6,6.6]){const c=makeCane(1.4,.08);c.position.copy(f.local(2.2,.5,z));g.add(c);}
-  const sg=new THREE.Group();sg.position.copy(f.local(5.2,.5,4.6));g.add(sg);
+  const sg=new THREE.Group();sg.position.copy(f.local(5.2,.5,4.6));g.add(sg);STN_SIGNS[i]=sg;
   for(const x of[-1.05,1.05]){const c=makeCane(2.6,.07);c.position.set(x,0,0);sg.add(c);}
   part(new THREE.PlaneGeometry(2.5,.98),new THREE.MeshBasicMaterial({map:texSign(STN_NO[i],STN[i],i>=4),side:THREE.DoubleSide}),sg,[0,2.15,.08]);
   sg.lookAt(f.local(2,.5,-10.5).setY(sg.position.y));
@@ -974,7 +974,33 @@ function orbit(tgt,off,out){const r0=off.length(),r=r0*view.zoom;const az=Math.a
 let camFollow=false;const followOff=new THREE.Vector3(0,2.6,6);
 function camHome(){view.yaw=0;view.pitch=0;view.zoom=1;camFollow=false;}
 function startFollow(w){if(camFollow)return;camFollow=true;const t=w.position.clone().add(V(0,1,0));const d=activeCam.position.clone().sub(t);d.y=0;if(d.lengthSq()<.01)d.set(0,0,1);d.normalize().multiplyScalar(6.2);d.y=2.7;followOff.copy(d);view.yaw=0;view.pitch=0;}
+let puzzleCam=null,focusMode=false;
+function signVis(v){STN_SIGNS.forEach(x=>x&&(x.visible=v));}
+function focusOn(objs,opts={}){signVis(false);const box=new THREE.Box3();objs.forEach(o=>{o.updateMatrixWorld(true);box.expandByObject(o);});(opts.points||[]).forEach(p=>box.expandByPoint(p));
+  const c=box.getCenter(new THREE.Vector3()),tgt=c.clone().add(V(0,opts.lift||0,0)),mn=box.min,mx=box.max,cs=[];for(let i=0;i<8;i++)cs.push(V(i&1?mx.x:mn.x,i&2?mx.y:mn.y,i&4?mx.z:mn.z));
+  const tc=camera.clone(),m=opts.pad||1,top=.6/m,side=.92/m,bot=-.86/m;
+  const fit=d=>{let lo=.5,hi=120;for(let it=0;it<22;it++){const mid=(lo+hi)/2;tc.position.copy(tgt).addScaledVector(d,mid);tc.lookAt(tgt);tc.updateMatrixWorld(true);
+    const ok=cs.every(p=>{const q=p.clone().project(tc);return q.z<1&&Math.abs(q.x)<side&&q.y<top&&q.y>bot;});if(ok)hi=mid;else lo=mid;}return hi;};
+  let cands=[];
+  if(opts.dir)cands.push(opts.dir.clone().normalize());
+  else{const f=frames[curSt],v=VIEWS[curSt];const d0=f.local(...v.cam).sub(f.local(...v.tgt));d0.y=0;d0.normalize();let az=[d0];
+    const pts=objs.map(o=>o.getWorldPosition(new THREE.Vector3()));
+    if(pts.length>2){let px=0,pz=0;pts.forEach(p=>{px+=p.x;pz+=p.z;});px/=pts.length;pz/=pts.length;let A=0,B=0,C=0;pts.forEach(p=>{const x=p.x-px,z=p.z-pz;A+=x*x;B+=x*z;C+=z*z;});
+      const th=.5*Math.atan2(2*B,A-C);let nx=-Math.sin(th),nz=Math.cos(th);if(nx*d0.x+nz*d0.z<0){nx=-nx;nz=-nz;}const n=V(nx,0,nz);
+      if(opts.side)az=[n];else{az=[];for(let t=0;t<=1.001;t+=.25)az.push(d0.clone().lerp(n,t).normalize());}}
+    const els=opts.elev?[opts.elev]:[.42,.7,1.05];az.forEach(h=>els.forEach(e=>cands.push(V(h.x,e,h.z).normalize())));}
+  const own=new Set();objs.forEach(o=>o.traverse(x=>own.add(x)));[girl,bunny].forEach(o=>o&&o.traverse(x=>own.add(x)));
+  const ctrs=objs.map(o=>{const bb=new THREE.Box3().setFromObject(o);return bb.getCenter(new THREE.Vector3());});
+  const rc=new THREE.Raycaster(),blockers=[];activeScene.traverseVisible(x=>{if(x.isMesh&&!own.has(x)&&x.material&&!x.material.transparent)blockers.push(x);});
+  const hits=pos=>{let n=0;for(const q of ctrs){const dir=q.clone().sub(pos),L=dir.length();rc.set(pos,dir.divideScalar(L));rc.far=L-.3;rc.near=.05;if(rc.intersectObjects(blockers,false).length)n++;}return n;};
+  const minD=Math.max(3.2,box.getSize(new THREE.Vector3()).length()*.95);let best=null,bd=1e9;cands.forEach(d=>{const r=Math.max(minD,fit(d)),cp=tgt.clone().addScaledVector(d,r),hh=solidBelow(cp,cp.y+8,false),sc=r*(1+.8*hits(cp))*(hh>cp.y-.8?4:1);if(sc<bd-.01){bd=sc;best=d;}});bd=Math.max(minD,fit(best));
+  puzzleCam={pos:tgt.clone().addScaledVector(best,bd),tgt};
+  camFollow=false;view.yaw=0;view.pitch=0;view.zoom=1;focusMode=true;moveTarget=null;}
+function focusOff(){puzzleCam=null;focusMode=false;signVis(true);}
+const PRAISE=['好棒！','答對了！','太厲害了！','你好聰明！','做得好！'];
+function cheer(o,msg){const p=new THREE.Vector3();if(o.isVector3)p.copy(o);else o.getWorldPosition(p);burstHearts(p.add(V(0,1,0)),10);toast(msg||pickR(PRAISE),1600);}
 function stationDesired(){
+  if(puzzleCam){desTgt.copy(puzzleCam.tgt);orbit(desTgt,puzzleCam.pos.clone().sub(puzzleCam.tgt),desPos);return;}
   if(camFollow&&!viewOverride){desTgt.copy(girl.position).add(V(0,1,0));orbit(desTgt,followOff.clone().multiplyScalar(portraitK()),desPos);}
   else{const f=frames[curSt],v=viewOverride||VIEWS[curSt];desTgt.copy(f.local(...v.tgt));const off=f.local(...v.cam).sub(desTgt).multiplyScalar(portraitK());orbit(desTgt,off,desPos);}
   const obs=DYN_OBST;
@@ -1016,7 +1042,7 @@ async function goTo(i){
 /* ================= free roam (open world) ================= */
 const keys={};let moveTarget=null;const stick={x:0,y:0,on:false};const isCoarse=matchMedia('(pointer:coarse)').matches;
 addEventListener('keydown',e=>{keys[e.code]=true;});addEventListener('keyup',e=>{keys[e.code]=false;});addEventListener('blur',()=>{for(const k in keys)keys[k]=false;});
-function roamActive(){return inputOK&&!dlgState&&!paused&&(mode==='station'||(mode==='room'&&!room.camView));}
+function roamActive(){return inputOK&&!focusMode&&!dlgState&&!paused&&(mode==='station'||(mode==='room'&&!room.camView));}
 function walker(){return mode==='room'?room.girl:girl;}
 const WATER_Y=-.9,STEP=3.6,SWIM_Y=WATER_Y-.95;
 function inWater(p){return p.z<-192&&p.z>-880&&Math.abs(p.x)<140;}
@@ -1306,33 +1332,41 @@ async function puzzleCandy(){
   await say('bunny','這四支大棒棒糖會唱歌。媽媽以前常在你睡前哼一首歌，對吧？');
   await say('girl','對！可是……我忘記怎麼唱了。');
   await say('bunny','沒關係，棒棒糖會先唱一次。你看哪一支先亮，照順序點一遍。');
-  let busy=false,idx=0;
-  const play=async()=>{busy=true;idx=0;await wait(500);for(const m of MEL){flash(lol[m]);sfx.note(NOTES[m]);await wait(640);}busy=false;};
-  setChip('仔細聽，照順序點棒棒糖 ♪');
-  await new Promise(async res=>{
-    lol.forEach((l,i)=>clickable(l,()=>{if(busy)return;flash(l);sfx.note(NOTES[i]);if(i===MEL[idx]){idx++;if(idx===MEL.length){lol.forEach(unclickable);setHint(null);setChip(null);later(res,600);}}else{idx=0;sfx.bad();toast('順序不太對，再聽一次喔');busy=true;later(play,900);}}));
-    setHint(async()=>{if(busy)return;await say('bunny','再唱一次給你聽，記住顏色的順序。');play();});
-    inputOK=true;await play();
-  });
-  inputOK=false;sfx.good();
+  focusOn(lol,{lift:.6});await wait(900);
+  const ROUNDS=[3,4,5];
+  for(let r=0;r<ROUNDS.length;r++){const seq=MEL.slice(0,ROUNDS[r]);let busy=false,idx=0;
+    const play=async()=>{busy=true;idx=0;await wait(600);for(const m of seq){flash(lol[m]);sfx.note(NOTES[m]);await wait(700);}busy=false;};
+    setChip(`第 ${r+1}/3 回：記住 ${seq.length} 個音，照順序點 ♪`);
+    await new Promise(async res=>{
+      lol.forEach((l,i)=>clickable(l,()=>{if(busy)return;flash(l);sfx.note(NOTES[i]);if(i===seq[idx]){idx++;if(idx===seq.length){lol.forEach(unclickable);setHint(null);later(res,500);}}else{idx=0;sfx.bad();toast('順序不太對，再聽一次喔');busy=true;later(play,900);}}));
+      setHint(async()=>{if(busy)return;play();});
+      inputOK=true;await play();
+    });
+    inputOK=false;sfx.good();cheer(lol[seq[seq.length-1]]);await wait(700);
+    if(r===0)await say('bunny','好棒！這次多一個音喔，仔細聽。');
+    else if(r===1)await say('bunny','太厲害了！最後一回，是整首歌！');
+  }
+  setChip(null);
   for(let k=0;k<2;k++){for(const m of MEL){flash(lol[m]);sfx.note(NOTES[m]);await wait(300);}}
+  focusOff();
   await say('girl','是媽媽的歌！我想起來了！');
   await say('bunny','要好好記住這首歌喔，最後會用到。');
 }
 async function puzzleSea(){
   const f=frames[2];
-  const defs=[['graham',6.5,-1.5],['cookie',9.6,.3],['graham',12,3.2],['choc',7.4,3.6],['donut',10.6,6.4],['graham',6.8,8]];
+  const defs=[['graham',5.6,.2],['cookie',7.8,1.2],['graham',9.4,2.8],['choc',6,3.4],['donut',8.2,4.6],['graham',6.4,5.8]];
   const items=defs.map(([type,x,z])=>{let o;
     if(type==='graham')o=part(new THREE.BoxGeometry(1.5,.12,.48),new LambM({map:texGraham}));
     else if(type==='cookie')o=part(new THREE.CylinderGeometry(.5,.5,.14,28),new LambM({map:texCookie}));
     else if(type==='choc')o=part(new THREE.BoxGeometry(1.5,.14,.48),new LambM({map:texChoc}));
     else{o=new THREE.Group();part(new THREE.TorusGeometry(.4,.18,12,24),M(0xd9984f,20),o,null,null,[Math.PI/2,0,0]);part(new THREE.TorusGeometry(.4,.18,12,24),M(0xff9cc4,50),o,[0,.06,0],[1,1,.6],[Math.PI/2,0,0]);}
-    o.position.copy(f.local(x,-.72,z));o.rotation.y=R(0,6);o.userData.type=type;o.userData.base=o.position.y;o.userData.ph=R(0,6);o.userData.float=true;puzzleRoot.add(o);shadows(o);return o;});
+    o.scale.setScalar(1.5);o.position.copy(f.local(x,-.72,z));o.rotation.y=R(0,6);o.userData.type=type;o.userData.base=o.position.y;o.userData.ph=R(0,6);o.userData.float=true;puzzleRoot.add(o);shadows(o);return o;});
   floaters.push(...items);
   await say('bunny','糟糕！前面的枕木被浪沖走了三塊。');
   await say('girl','少了枕木，火車就過不去了……');
   await say('bunny','海上漂著好多點心。找出跟枕木一模一樣的：方方的，上面有小洞洞的。');
-  setChip('找出 3 塊有小洞洞的方形餅乾');
+  focusOn(items,{elev:1.1});
+  setChip('找出有小洞洞的方形餅乾：0/3');
   const quip={cookie:'這個是圓的，放上去會滾走啦。',donut:'甜甜圈中間有洞，可是它不是方的喔。',choc:'巧克力是方的，可是上面沒有小洞洞。'};
   let placed=0;
   await new Promise(res=>{
@@ -1341,29 +1375,30 @@ async function puzzleSea(){
       unclickable(o);o.userData.float=false;const k=gapIdx[placed++];const m=sleeperMats[k],tp=new THREE.Vector3(),tq=new THREE.Quaternion(),ts=new THREE.Vector3();m.decompose(tp,tq,ts);
       const fp=o.position.clone(),fq=o.quaternion.clone();sfx.sparkle();
       await tween(900,(e)=>{o.position.lerpVectors(fp,tp,e);o.position.y+=Math.sin(e*Math.PI)*2.2;o.quaternion.copy(fq).slerp(tq,e);});
-      sleepers.setMatrixAt(k,m);sleepers.instanceMatrix.needsUpdate=true;o.visible=false;sfx.good();
+      sleepers.setMatrixAt(k,m);sleepers.instanceMatrix.needsUpdate=true;o.visible=false;sfx.good();cheer(tp.clone(),placed<3?`找到 ${placed}/3 塊！`:'全部找到了！');setChip(`找出有小洞洞的方形餅乾：${placed}/3`);
       if(placed===3){items.forEach(unclickable);setHint(null);setChip(null);later(res,500);}
     }));
     setHint(()=>say('bunny','看看鐵軌上的枕木：是長方形的餅乾，上面有一排小洞洞。海上有三塊長得一樣喔。'));
     inputOK=true;
   });
-  inputOK=false;
+  inputOK=false;focusOff();
   await say('bunny',`修好了！${G}好厲害。`);
   await say('girl','小魚們也在旁邊游來游去，好像在幫我們加油。');
   await say('bunny','接下來火車要往天上爬，別往下看喔～');
 }
 async function puzzleClouds(){
   const f=frames[3];const RB=[0xff5b5b,0xffa040,0xffe04a,0x66d36e,0x58a8ff],RBC=['#ff5b5b','#ffa040','#ffe04a','#66d36e','#58a8ff'];
-  const spots=[0,1,2,3,4].map(i=>{const o=new THREE.Object3D();o.position.copy(f.local(8.4+Math.sin(i)*0.6,1.8+(i%2)*.5,-2.2+i*2.5));return o;});
+  const spots=[0,1,2,3,4].map(i=>{const o=new THREE.Object3D();o.position.copy(f.local(8.4+Math.sin(i)*0.6,1.8+(i%2)*.5,-.6+i*1.7));return o;});
   const sorted=sortScreen(spots,3);const start=[3,0,4,1,2];
   const clouds=sorted.map((s,i)=>{const g=new THREE.Group();g.position.copy(s.position);const mat=new LambM({color:RB[start[i]],emissive:new THREE.Color(RB[start[i]]).multiplyScalar(.25)});for(let k=0;k<6;k++){const r=R(.35,.6);part(SPH,mat,g,[R(-.6,.6),R(-.15,.25),R(-.35,.35)],[r*1.2,r*.85,r]);}g.userData={ci:start[i],mat,bob:R(0,6)};puzzleRoot.add(g);return g;});
   await say('bunny','晚霞雲站到了，這裡是天空的轉角。');
   await say('bunny','要繼續往上，需要一道彩虹幫我們指路。');
   await say('bunny','點雲朵可以換顏色。從左到右排成彩虹：紅、橙、黃、綠、藍。');
-  setChip('從左到右：'+RBC.map(c=>`<i style="background:${c}"></i>`).join(''));
+  focusOn(clouds,{lift:.3,side:true});
+  const cloudChip=()=>{const n=clouds.filter((c,i)=>c.userData.ci===i).length;setChip('從左到右排出彩虹：'+RBC.map(c=>`<i style="background:${c}"></i>`).join('')+` 對了 ${n}/5`);};cloudChip();
   await new Promise(res=>{
     const check=()=>clouds.every((c,i)=>c.userData.ci===i);
-    clouds.forEach(c=>clickable(c,()=>{c.userData.ci=(c.userData.ci+1)%5;const col=new THREE.Color(RB[c.userData.ci]);c.userData.mat.color.copy(col);c.userData.mat.emissive.copy(col).multiplyScalar(.25);tone(500+c.userData.ci*120,.25,'sine',.1);const s0=c.scale.x;tween(300,(k,raw)=>{const s=1+Math.sin(raw*Math.PI)*.18;c.scale.set(s,s,s);});
+    clouds.forEach(c=>clickable(c,()=>{c.userData.ci=(c.userData.ci+1)%5;const col=new THREE.Color(RB[c.userData.ci]);c.userData.mat.color.copy(col);c.userData.mat.emissive.copy(col).multiplyScalar(.25);tone(500+c.userData.ci*120,.25,'sine',.1);const s0=c.scale.x;tween(300,(k,raw)=>{const s=1+Math.sin(raw*Math.PI)*.18;c.scale.set(s,s,s);});cloudChip();if(c.userData.ci===clouds.indexOf(c)){sfx.note(NOTES[clouds.indexOf(c)%4]);burstHearts(c.getWorldPosition(new THREE.Vector3()).add(V(0,.6,0)),5);}
       if(check()){clouds.forEach(unclickable);setHint(null);setChip(null);later(res,400);}}));
     setHint(()=>say('bunny','最左邊是紅色，最右邊是藍色。中間依序是橙、黃、綠。'));
     inputOK=true;
@@ -1374,7 +1409,7 @@ async function puzzleClouds(){
   for(let i=0;i<rp.count;i++){const r=Math.hypot(rp.getX(i),rp.getY(i));const b=clamp(Math.floor((13.5-r)/3.5*7),0,6);cols.push(bandC[b].r,bandC[b].g,bandC[b].b);}
   ring.setAttribute('color',new THREE.Float32BufferAttribute(cols,3));
   const rb=new THREE.Mesh(ring,new THREE.MeshBasicMaterial({vertexColors:true,transparent:true,opacity:0,side:THREE.DoubleSide,fog:false,depthWrite:false}));rb.position.copy(f.local(16,-3,30));rb.lookAt(vc.position);puzzleRoot.add(rb);
-  camHome();viewOverride={cam:[-3.5,3.4,-8],tgt:[9,5,14]};
+  focusOff();camHome();viewOverride={cam:[-3.5,3.4,-8],tgt:[9,5,14]};
   sfx.sparkle();await tween(2200,k=>{rb.material.opacity=k*.85;rb.scale.setScalar(.3+.7*k);});
   await tween(2400,k=>setReveal(lerp(stationD[3]+14,stationD[4]+14,k)));
   await say('girl','彩虹出現了！鐵軌也長出來了！');
@@ -1397,6 +1432,7 @@ async function puzzleStars(){
   await say('bunny','媽媽每天抱你的時候，心裡裝滿的那個形狀。');
   await say('girl','是愛心！');
   await say('bunny','對！先點一顆愛心上的星星，再一顆接著旁邊一顆，繞成一圈。');
+  focusOn([grp],{dir:vc.position.clone().sub(grp.position)});
   setChip('把星星連成 <span style="color:#ff5c8d;font-size:18px">♥</span>');
   let seq=[];
   const draw=()=>{const pts=seq.map(i=>hp[i]);if(seq.length===8)pts.push(hp[seq[0]]);lineGeo.setFromPoints(pts.length?pts:[V(0,0,0)]);};
@@ -1412,7 +1448,7 @@ async function puzzleStars(){
   });
   inputOK=false;sfx.good();
   await tween(1200,k=>{fill.material.opacity=k*.45;});
-  shootT=0;camHome();
+  focusOff();shootT=0;camHome();
   await tween(2600,k=>setReveal(lerp(stationD[4]+14,L,k)));
   await say('bunny','路出現了！下一站就是終點站，月亮車站！');
 }
@@ -1438,17 +1474,19 @@ async function puzzleBells(){
   await say('bunny','嗯。不過這扇門只聽得懂一首歌。');
   await say('girl','……是媽媽的歌！');
   await say('bunny','就是在糖果樂園學會的那一首。用這四個鈴鐺敲出來吧。');
-  setChip('敲出媽媽的歌 '+MEL.map(()=>'♪').join(''));
+  focusOn(bells,{side:true,elev:.25,pad:1.15});
+  const bellChip=(n)=>setChip('敲出媽媽的歌 '+MEL.map((m,k)=>`<span style="color:${k<n?'#ff5c8d':'#c9bfd6'};font-size:20px">♪</span>`).join(''));bellChip(0);
   let idx=0,fails=0,busy=false;
   const ring=b=>{b.userData.glow=1;b.userData.swing=1;sfx.bell(NOTES[b.userData.tone]);};
   const playHint=async()=>{busy=true;idx=0;for(const m of MEL){ring(sortedB[m]);await wait(650);}busy=false;};
   await new Promise(res=>{
-    bells.forEach(b=>clickable(b,async()=>{if(busy)return;ring(b);if(b.userData.tone===MEL[idx]){idx++;if(idx===MEL.length){bells.forEach(unclickable);setHint(null);setChip(null);later(res,700);}}
-      else{idx=0;fails++;sfx.bad();toast('好像不太對，再試一次');if(fails===2){await wait(500);await say('bunny','想想棒棒糖亮起來的顏色：紅色先，然後黃、綠、黃，最後是藍色。');}}}));
+    bells.forEach(b=>clickable(b,async()=>{if(busy)return;ring(b);if(b.userData.tone===MEL[idx]){idx++;bellChip(idx);if(idx===MEL.length){bells.forEach(unclickable);setHint(null);setChip(null);later(res,700);}}
+      else{idx=0;bellChip(0);fails++;sfx.bad();toast('好像不太對，再試一次');if(fails===2){await wait(500);await say('bunny','想想棒棒糖亮起來的顏色：紅色先，然後黃、綠、黃，最後是藍色。');}}}));
     setHint(async()=>{if(busy)return;await say('bunny','我先敲一次給你聽喔。');playHint();});
     inputOK=true;
   });
   inputOK=false;
+  focusOff();
   return {gate,doors,light,mom};
 }
 
@@ -1692,11 +1730,11 @@ async function ending(){
 }
 const CHAPTERS=[
  {no:'序章',name:'遊戲室的城堡',desc:'等媽媽來接的下午，玩具城堡的門口探出一隻兔子耳朵。',tag:'跟著兔子',thumb:'intro'},
- {no:'第一章',name:'糖果樂園',desc:'會唱歌的棒棒糖，藏著媽媽睡前常哼的那首歌。',tag:'記住旋律',thumb:'bd_candy'},
- {no:'第二章',name:'餅乾海岸',desc:'修好海上的鐵軌，再走進玻璃海底隧道，看藍鯨、魟魚和海龜游過頭頂。',tag:'找出形狀',thumb:'bd_sea'},
- {no:'第三章',name:'晚霞雲端',desc:'火車爬上天空，把雲朵排成彩虹才能繼續往上。',tag:'排出彩虹',thumb:'clouds'},
- {no:'第四章',name:'銀河星軌',desc:'夜空裡最亮的八顆星星，要連成一個大大的愛心。',tag:'連連看',thumb:'bd_space'},
- {no:'第五章',name:'月亮車站',desc:'用四個鈴鐺敲出媽媽的歌，打開最後一扇門。',tag:'敲出旋律',thumb:'moon'},
+ {no:'第一章',name:'糖果樂園',desc:'會唱歌的棒棒糖，藏著媽媽睡前常哼的那首歌。',tag:'記憶力・聽力',thumb:'bd_candy'},
+ {no:'第二章',name:'餅乾海岸',desc:'修好海上的鐵軌，再走進玻璃海底隧道，看藍鯨、魟魚和海龜游過頭頂。',tag:'觀察力・形狀',thumb:'bd_sea'},
+ {no:'第三章',name:'晚霞雲端',desc:'火車爬上天空，把雲朵排成彩虹才能繼續往上。',tag:'顏色・順序',thumb:'clouds'},
+ {no:'第四章',name:'銀河星軌',desc:'夜空裡最亮的八顆星星，要連成一個大大的愛心。',tag:'眼手協調',thumb:'bd_space'},
+ {no:'第五章',name:'月亮車站',desc:'用四個鈴鐺敲出媽媽的歌，打開最後一扇門。',tag:'記憶力・節奏',thumb:'moon'},
  {no:'尾聲',name:'沙發上醒來',desc:'睜開眼睛的地方，和一隻熟悉的兔子布偶。',tag:'故事結局',thumb:'home'}];
 const CH_FN=[async()=>{await playroom();await dream();},ch1,ch2,ch3,ch4,ch5,ending];
 let curChapter=0,paused=false;
@@ -1708,7 +1746,7 @@ function resetAll(){
   while(puzzleRoot.children.length)puzzleRoot.remove(puzzleRoot.children[0]);
   glowers.length=0;twinklers.length=0;floaters.length=0;hearts.forEach(h=>h.parent&&h.parent.remove(h));hearts.length=0;
   if(tunnelInfo&&tunnelInfo.whale)tunnelInfo.whale.userData.seen=false;
-  momRef=null;viewOverride=null;camHome();shootT=-1;DYN_OBST.length=0;moveTarget=null;depResolve=null;$('#departBtn').hidden=true;stick.x=stick.y=0;
+  focusOff();momRef=null;viewOverride=null;camHome();shootT=-1;DYN_OBST.length=0;moveTarget=null;depResolve=null;$('#departBtn').hidden=true;stick.x=stick.y=0;
   [girl,bunny,room.girl].forEach(c=>{c.userData.roaming=false;c.userData.swimming=false;c.userData.climbing=false;c.userData.vy=0;});LAND.forEach(o=>{o.done=false;});walkProg=null;autoWalk=false;depNext=null;lastDepart='train';
   $('#end').hidden=true;$('#photo').hidden=true;$('#route').hidden=false;canvas.style.transition='none';canvas.style.filter='';
   ['#lidT','#lidB'].forEach((id,i)=>{const l=$(id);l.style.transition='none';l.style.transform=`translateY(${i?102:-102}%)`;});
@@ -1768,7 +1806,7 @@ if(matchMedia('(pointer:coarse)').matches)$('#howTo').innerHTML='單指拖曳轉
     const ds=document.createElement('span');ds.className='chdesc';ds.textContent=c.desc;
     tx.append(top,nm,ds);b.append(th,tx);b.addEventListener('click',()=>runFrom(i));li.appendChild(b);list.appendChild(li);});
 })();
-window.__dbg={jump(i){$('#title').hidden=true;$('#hud').hidden=false;fadeEl.style.opacity=0;activeScene=scene;activeCam=camera;setReveal(L);onPlatform(i);curSt=i;trainSt.d=stationD[i]+6;placeTrain();mode='station';viewOverride=null;stationDesired();camPos.copy(desPos);camTgt.copy(desTgt);},
+window.__dbg={fb(){return JSON.stringify(window.__fb)},snap(){stationDesired();camPos.copy(desPos);camTgt.copy(desTgt);camera.position.copy(camPos);camera.lookAt(camTgt);return this.st();},st(){const a=v=>v.toArray().map(x=>+x.toFixed(1));return JSON.stringify({pc:puzzleCam&&[a(puzzleCam.pos),a(puzzleCam.tgt)],fm:focusMode,mode,cf:camFollow,cam:a(camera.position),des:a(desPos),act:activeCam===camera,ov:!!viewOverride});},puz(k){this.jump(k);[0,puzzleCandy,puzzleSea,puzzleClouds,puzzleStars,puzzleBells][k]();},jump(i){$('#title').hidden=true;$('#hud').hidden=false;fadeEl.style.opacity=0;activeScene=scene;activeCam=camera;setReveal(L);onPlatform(i);curSt=i;trainSt.d=stationD[i]+6;placeTrain();mode='station';viewOverride=null;stationDesired();camPos.copy(desPos);camTgt.copy(desTgt);},
  travel(d){$('#title').hidden=true;fadeEl.style.opacity=0;activeScene=scene;activeCam=camera;setReveal(L);seatInTrain();trainSt.d=d;placeTrain();mode='travel';travelShot=0;travelDesired();camPos.copy(desPos);camTgt.copy(desTgt);},
  room(){$('#title').hidden=true;fadeEl.style.opacity=0;},place(k,lx,lz,yaw,zoom){this.jump(k);const f=frames[k];const p=f.local(lx,0,lz);p.y=200;const r=heightAt(p,400);girl.position.set(p.x,r?r.h:0,p.z);girl.userData.swimming=r&&r.swim;bunny.position.copy(girl.position).add(V(1,0,.5));bunny.userData.swimming=girl.userData.swimming;camFollow=false;startFollow(girl);view.yaw=yaw||0;view.zoom=zoom||1;mode='station';},tunnelShot(i,yaw,zoom,pitch){this.jump(2);const q=i<0?tunnelInfo.domeC:tunnelInfo.pts[i];girl.position.copy(q);bunny.position.copy(q).add(V(1,0,.6));girl.userData.swimming=false;camFollow=false;startFollow(girl);view.yaw=yaw||0;view.zoom=zoom||1;view.pitch=pitch||0;walkProg=stationD[2];stationDesired();camPos.copy(desPos);camTgt.copy(desTgt);if(tunnelInfo.whale){}},whaleShot(){this.jump(2);mode='dbg';},tubeEscape(){activeScene=scene;activeCam=camera;mode='station';inputOK=true;curSt=2;onPlatform(2);const q=tunnelInfo.pts[120];girl.position.copy(q);girl.userData.roaming=false;girl.userData.inTube=true;camera.position.copy(q).add(V(0,2,4));camTgt.copy(q);
  const side=V(q.x+8,q.y,q.z+8);moveTarget=side;for(let i=0;i<200;i++)stepRoam(1/30);const r1=[+girl.position.y.toFixed(2),girl.userData.swimming,+girl.position.distanceTo(q).toFixed(2)];
