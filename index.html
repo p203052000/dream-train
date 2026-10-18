@@ -155,6 +155,7 @@ button:focus-visible{outline:3px solid var(--sun);outline-offset:2px}
   <div class="route" id="route"></div>
   <div class="tools">
     <button class="btn" id="pauseBtn" aria-label="暫停">Ⅱ 暫停</button>
+    <button class="btn" id="replayBtn" hidden aria-label="重玩這一關">↻ 重玩</button>
     <button class="btn hl" id="hintBtn" hidden>提示</button>
     <button class="btn" id="ffBtn" hidden>快轉 ▸▸</button>
     <button class="btn" id="camBtn" hidden aria-label="視角回正">⟲ 視角</button>
@@ -2755,11 +2756,11 @@ function offerReplay(c){return new Promise(res=>{const ch=CHAPTERS[c];const w=do
 async function runFrom(k){
   initAudio();resetAll();const g0=gen;
   $('#title').hidden=true;$('#hud').hidden=false;prepChapter(k);
-  try{for(let c=k;c<CH_FN.length;c++){if(g0!==gen)return;curChapter=c;await CH_FN[c]();if(g0!==gen)return;
+  try{for(let c=k;c<CH_FN.length;c++){if(g0!==gen)return;curChapter=c;$('#replayBtn').hidden=!(c>=1&&c<=11);await CH_FN[c]();if(g0!==gen)return;
     if(c>=1&&c<=11&&await offerReplay(c)){if(g0===gen)runFrom(c);return;}}}catch(err){console.error(err);}
 }
 function goHome(){
-  document.querySelectorAll('.replay').forEach(e=>e.remove());resetAll();$('#hud').hidden=true;activeScene=roomScene;activeCam=roomCam;mode='room';
+  document.querySelectorAll('.replay').forEach(e=>e.remove());$('#replayBtn').hidden=true;resetAll();$('#hud').hidden=true;activeScene=roomScene;activeCam=roomCam;mode='room';
   fadeEl.style.background='#fff';fadeEl.style.opacity=.25;$('#title').hidden=false;
 }
 function setPaused(v){paused=v;$('#pause').hidden=!v;if(v){$('#pauseCh').textContent=CHAPTERS[curChapter].no+'・'+CHAPTERS[curChapter].name;}
@@ -2768,6 +2769,7 @@ $('#startBtn').addEventListener('click',()=>runFrom(0));
 document.querySelectorAll('#modes button').forEach(b=>b.addEventListener('click',()=>{sfx.pop();vSetMode(b.dataset.m);}));vSetMode(VMODE);
 $('#againBtn').addEventListener('click',goHome);
 $('#pauseBtn').addEventListener('click',()=>setPaused(true));
+{const rb=$('#replayBtn');let armT=null;rb.addEventListener('click',e=>{e.stopPropagation();sfx.pop();if(!armT){rb.textContent='再點一下重玩';rb.classList.add('hl');armT=setTimeout(()=>{armT=null;rb.textContent='↻ 重玩';rb.classList.remove('hl');},2600);return;}clearTimeout(armT);armT=null;rb.textContent='↻ 重玩';rb.classList.remove('hl');document.querySelectorAll('.replay').forEach(x=>x.remove());runFrom(curChapter);});}
 $('#camBtn').addEventListener('click',()=>{camHome();});
 $('#departBtn').addEventListener('click',()=>{sfx.pop();depResolve&&depResolve('train');});
 $('#autoBtn').addEventListener('click',()=>{autoWalk=!autoWalk;moveTarget=null;});
